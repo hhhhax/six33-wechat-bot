@@ -2,7 +2,8 @@ package backend
 
 import (
 	"time"
-	// 移除了decimal包，不再需要
+
+	"github.com/shopspring/decimal"
 )
 
 // 移除了User结构，六合彩机器人不需要用户管理
@@ -215,47 +216,64 @@ type SingleBetParsing struct {
 	ErrorMessage  string                    `json:"errorMessage"`  // 错误信息
 }
 
-// LotteryBetInfo 单个体彩的下注信息
+// BetTypeFlags 下注类型标识（英文变量名）
+type BetTypeFlags struct {
+	HasThreeOfThree bool `json:"hasThreeOfThree"` // 是否存在三中三下注
+	HasThreeOfTwo   bool `json:"hasThreeOfTwo"`   // 是否存在三中二下注
+	HasTwoOfTwo     bool `json:"hasTwoOfTwo"`     // 是否存在二中二下注
+	HasSpecial      bool `json:"hasSpecial"`      // 是否存在特碰下注
+}
+
+// BetModeInfo 单种模式的信息
+type BetModeInfo struct {
+	ModeName   string          `json:"modeName"`   // 模式名称（"complex"/"drag"/"single"/"multiple"）
+	BetDetails []BetDetail     `json:"betDetails"` // 该模式下的具体下注明细
+	Groups     int             `json:"groups"`     // 该模式组数
+	Amount     decimal.Decimal `json:"amount"`     // 该模式金额
+	UnitAmount decimal.Decimal `json:"unitAmount"` // 单组金额
+}
+
+// BetTypeDetail 单个下注类型的详细信息
+type BetTypeDetail struct {
+	BetType     string                 `json:"betType"`     // 下注类型名称
+	Modes       map[string]BetModeInfo `json:"modes"`       // 该类型包含的各种模式 key: 模式名称
+	TotalGroups int                    `json:"totalGroups"` // 该类型总组数
+	TotalAmount decimal.Decimal        `json:"totalAmount"` // 该类型总金额
+	HasNumbers  bool                   `json:"hasNumbers"`  // 是否有具体号码
+}
+
+// LotteryBetInfo 单个体彩的下注信息（最终优化版）
 type LotteryBetInfo struct {
-	LotteryType string                 `json:"lotteryType"` // 体彩类型("新澳"/"老澳"/"香港")
-	BetTypes    map[string]BetTypeInfo `json:"betTypes"`    // 各下注类型信息 key: 下注类型("三中三"/"二中二"/"特碰")
-	TotalAmount float64                `json:"totalAmount"` // 该体彩总下注金额
-	TotalGroups int                    `json:"totalGroups"` // 该体彩总下注组数
+	LotteryType    string                   `json:"lotteryType"`    // 体彩类型
+	BetTypeFlags   BetTypeFlags             `json:"betTypeFlags"`   // 下注类型标识
+	SourceNumbers  []int                    `json:"sourceNumbers"`  // 原始号码
+	UnitAmount     decimal.Decimal          `json:"unitAmount"`     // 单组金额
+	BetTypeDetails map[string]BetTypeDetail `json:"betTypeDetails"` // 各下注类型详情 key: betType
+	TotalAmount    decimal.Decimal          `json:"totalAmount"`    // 该体彩总下注金额
+	TotalGroups    int                      `json:"totalGroups"`    // 该体彩总下注组数
 }
 
-// BetTypeInfo 单个下注类型的信息
-type BetTypeInfo struct {
-	BetType     string      `json:"betType"`     // 下注类型("三中三"/"二中二"/"特碰")
-	BetDetails  []BetDetail `json:"betDetails"`  // 具体下注明细列表
-	TotalGroups int         `json:"totalGroups"` // 该类型总组数
-	TotalAmount float64     `json:"totalAmount"` // 该类型总金额
-	IsComplex   bool        `json:"isComplex"`   // 是否复式下注（从N个号码选组合）
-	IsDrag      bool        `json:"isDrag"`      // 是否拖码下注（多组号码笛卡尔积）
-	HasNumbers  bool        `json:"hasNumbers"`  // 是否有具体号码（用于错误检查）
-}
-
-// BetDetail 具体下注明细
+// BetDetail 具体下注明细（最终版）
 type BetDetail struct {
-	Numbers     []int   `json:"numbers"`     // 具体号码组合
-	Amount      float64 `json:"amount"`      // 该组合的下注金额
-	Groups      int     `json:"groups"`      // 该明细的组数（复式/拖码时可能>1）
-	Description string  `json:"description"` // 描述信息
+	Numbers     []int           `json:"numbers"`     // 具体号码组合（如[1,2,3]表示一组三中三）
+	Amount      decimal.Decimal `json:"amount"`      // 该组合的下注金额
+	Description string          `json:"description"` // 描述信息（如"新澳 三中三 复式"）
 }
 
 // BetStatistics 单笔下注统计
 type BetStatistics struct {
-	TotalAmount  float64 `json:"totalAmount"`  // 总金额
-	TotalGroups  int     `json:"totalGroups"`  // 总组数
-	LotteryCount int     `json:"lotteryCount"` // 体彩数量
+	TotalAmount  decimal.Decimal `json:"totalAmount"`  // 总金额
+	TotalGroups  int             `json:"totalGroups"`  // 总组数
+	LotteryCount int             `json:"lotteryCount"` // 体彩数量
 	// 按体彩分类的下注类型统计
 	LotteryBetTypeStats map[string]map[string]BetTypeStat `json:"lotteryBetTypeStats"` // [体彩][下注类型] -> 统计
 }
 
 // RoundBetStatistics 整轮下注统计
 type RoundBetStatistics struct {
-	TotalAmount float64 `json:"totalAmount"` // 总金额
-	TotalGroups int     `json:"totalGroups"` // 总组数
-	TotalBets   int     `json:"totalBets"`   // 总笔数
+	TotalAmount decimal.Decimal `json:"totalAmount"` // 总金额
+	TotalGroups int             `json:"totalGroups"` // 总组数
+	TotalBets   int             `json:"totalBets"`   // 总笔数
 	// 各体彩各下注类型的统计
 	LotteryBetTypeStats map[string]map[string]BetTypeStat `json:"lotteryBetTypeStats"` // [体彩][下注类型] -> 统计
 	// 体彩总计（所有下注类型合计）
@@ -266,9 +284,9 @@ type RoundBetStatistics struct {
 
 // BetTypeStat 下注类型统计信息
 type BetTypeStat struct {
-	Amount float64 `json:"amount"` // 金额
-	Groups int     `json:"groups"` // 组数
-	Count  int     `json:"count"`  // 笔数
+	Amount decimal.Decimal `json:"amount"` // 金额
+	Groups int             `json:"groups"` // 组数
+	Count  int             `json:"count"`  // 笔数
 }
 
 // IntelligentBetParserConfig 智能解析器配置
@@ -278,5 +296,6 @@ type IntelligentBetParserConfig struct {
 	TailMap        map[string][]int    `json:"tailMap"`        // 尾数映射
 	BetTypeAliases map[string][]string `json:"betTypeAliases"` // 下注类型别名
 	LotteryAliases map[string][]string `json:"lotteryAliases"` // 体彩别名
-	EndKeywords    []string            `json:"endKeywords"`    // 结束关键词
+	KeywordAliases map[string][]string `json:"keywordAliases"` // 关键字别名
+	EndKeywords    map[string][]string `json:"endKeywords"`    // 结束关键词
 }

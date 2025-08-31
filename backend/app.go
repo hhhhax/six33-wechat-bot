@@ -270,10 +270,6 @@ func (a *App) GetAuthStatus() map[string]interface{} {
 func (a *App) ParseBetInput(input string, enabledTypes []string) (*BetParseResponse, error) {
 	defer recoverWithLog("ParseBetInput")
 
-	if !a.IsAuthorized() {
-		return nil, fmt.Errorf("未授权，无法进行解析")
-	}
-
 	if strings.TrimSpace(input) == "" {
 		response := &BetParseResponse{
 			Success: false,
@@ -509,10 +505,6 @@ func (a *App) ResetSystemConfig() error {
 func (a *App) ParseBetInputIntelligent(input string, enabledTypes []string) (*BetParsingResult, error) {
 	defer recoverWithLog("ParseBetInputIntelligent")
 
-	if !a.IsAuthorized() {
-		return nil, fmt.Errorf("未授权，无法进行解析")
-	}
-
 	if strings.TrimSpace(input) == "" {
 		result := &BetParsingResult{
 			HasError:      true,
@@ -540,8 +532,8 @@ func (a *App) ParseBetInputIntelligent(input string, enabledTypes []string) (*Be
 
 	// 记录解析日志
 	if !result.HasError {
-		safeLogger.AppendLog(fmt.Sprintf("智能解析成功: %d笔下注, 总金额%.2f元",
-			result.RoundStatistics.TotalBets, result.RoundStatistics.TotalAmount))
+		safeLogger.AppendLog(fmt.Sprintf("智能解析成功: %d笔下注, 总金额%s元",
+			result.RoundStatistics.TotalBets, result.RoundStatistics.TotalAmount.String()))
 	} else {
 		safeLogger.AppendLog(fmt.Sprintf("智能解析失败: %v", result.ErrorMessages))
 	}
@@ -581,10 +573,17 @@ func (a *App) createParserConfig() IntelligentBetParserConfig {
 			"特碰":  betTypeAliases.Special,
 		},
 		LotteryAliases: map[string][]string{
-			"新澳": {"新", "新澳", "新澳门"},
-			"老澳": {"老", "老澳", "老澳门", "旧"},
-			"香港": {"港", "香港", "hk"},
+			"新澳": keywordAliases.NewMacau,
+			"老澳": keywordAliases.OldMacau,
+			"香港": keywordAliases.HongKong,
 		},
-		EndKeywords: append(keywordAliases.Each, keywordAliases.PerGroup...),
+		KeywordAliases: map[string][]string{
+			"复式": keywordAliases.Complex,
+		},
+		EndKeywords: map[string][]string{
+			"各": keywordAliases.Each,
+			"每组": keywordAliases.PerGroup,
+		},
+
 	}
 }

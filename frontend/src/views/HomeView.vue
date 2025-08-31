@@ -89,6 +89,7 @@
             <div class="flex-1 border border-gray-200 rounded-md p-3 bg-gray-50 overflow-y-auto">
               <h3 class="text-sm font-semibold text-gray-700 mb-2">实时预览</h3>
               
+
               <div v-if="previewResult && !previewResult.hasError" class="text-sm">
                 <!-- 成功解析的表格显示 -->
                 <div class="bg-white rounded border overflow-hidden">
@@ -98,7 +99,8 @@
                         <th class="px-2 py-1 text-left border-r">体彩</th>
                         <th class="px-2 py-1 text-left border-r">下注类别</th>
                         <th class="px-2 py-1 text-center border-r">组数</th>
-                        <th class="px-2 py-1 text-right">金额</th>
+                        <th class="px-2 py-1 text-center border-r">金额</th>
+                        <th class="px-2 py-1 text-center">详情</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -111,15 +113,24 @@
                         <td class="px-2 py-1 border-r">
                           <div v-for="(betType, index) in lotteryStats.betTypes" :key="index" class="text-xs">
                             {{ betType.type }} ({{ betType.groups }}组)
-                </div>
+                          </div>
                         </td>
                         <td class="px-2 py-1 text-center border-r font-mono">{{ lotteryStats.totalGroups }}</td>
-                        <td class="px-2 py-1 text-right font-mono">{{ lotteryStats.totalAmount }}元</td>
+                        <td class="px-2 py-1 text-center border-r font-mono">{{ lotteryStats.totalAmount }}元</td>
+                        <td class="px-2 py-1 text-center">
+                          <div v-for="(betType, index) in lotteryStats.betTypes" :key="index" class="mb-1">
+                            <button @click="showBetDetail(lottery, betType.type, betType.info)" 
+                                    class="px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors">
+                              详情
+                            </button>
+                          </div>
+                        </td>
                       </tr>
                       <tr class="border-t bg-blue-50 font-semibold">
                         <td colspan="2" class="px-2 py-1 border-r">总计</td>
                         <td class="px-2 py-1 text-center border-r font-mono">{{ getTotalGroups(previewResult) }}</td>
-                        <td class="px-2 py-1 text-right font-mono text-blue-600">{{ getTotalAmount(previewResult) }}元</td>
+                        <td class="px-2 py-1 text-center border-r font-mono text-blue-600">{{ getTotalAmount(previewResult) }}元</td>
+                        <td class="px-2 py-1 text-center">-</td>
                       </tr>
                     </tbody>
                   </table>
@@ -128,7 +139,7 @@
                 <!-- 解析时间显示 -->
                 <div class="mt-2 text-xs text-gray-500 text-center">
                   解析时间: {{ formatParseTime(previewResult) }}
-              </div>
+                </div>
               </div>
               
               <div v-else-if="previewResult && previewResult.hasError" class="text-sm">
@@ -376,6 +387,15 @@
     
     <!-- 通知组件 -->
     <Notification ref="notification" />
+    
+    <!-- 下注详情弹窗 -->
+    <BetDetailModal 
+      :isVisible="detailModal.isVisible"
+      :lottery="detailModal.lottery"
+      :betType="detailModal.betType"
+      :betTypeInfo="detailModal.betTypeInfo"
+      @close="closeDetailModal"
+    />
   </div>
 </template>
 
@@ -383,6 +403,7 @@
 import { ref, computed, watch } from 'vue';
 import { goApi } from '../api/goApi';
 import Notification from '../components/Notification.vue';
+import BetDetailModal from '../components/BetDetailModal.vue';
 
 defineProps({
   isAuthorized: Boolean
@@ -393,6 +414,14 @@ const betInput = ref('');
 const parseResult = ref(null);
 const previewResult = ref(null);
 const parsedBets = ref([]);
+
+// 下注详情弹窗状态
+const detailModal = ref({
+  isVisible: false,
+  lottery: '',
+  betType: '',
+  betTypeInfo: {}
+});
 
 // 彩种启用状态
 const enabledLotteries = ref({
@@ -460,7 +489,7 @@ const performBetParsing = async (showNotification = false) => {
         const lotteryInfo = [];
         for (const [lottery, info] of Object.entries(bet.lotteryBets)) {
           const betTypeInfo = [];
-          for (const [betType, typeInfo] of Object.entries(info.betTypes)) {
+          for (const [betType, typeInfo] of Object.entries(info.betTypeDetails)) {
             betTypeInfo.push(`${betType}: ${typeInfo.totalGroups}组/${typeInfo.totalAmount}元`);
           }
           lotteryInfo.push(`${lottery}(${betTypeInfo.join(', ')})`);
@@ -730,16 +759,29 @@ const getLotteryStats = (result) => {
   }
   
   const stats = {};
-  const lotteryBetTypeStats = result.parseData.roundStatistics.lotteryBetTypeStats || {};
+  const roundStats = result.parseData.roundStatistics;
+  const lotteryBetTypeStats = roundStats.lotteryBetTypeStats || {};
   
-  for (const [lottery, total] of Object.entries(result.parseData.roundStatistics.lotteryTotals)) {
+  for (const [lottery, total] of Object.entries(roundStats.lotteryTotals)) {
     const betTypes = [];
     if (lotteryBetTypeStats[lottery]) {
       for (const [betType, betStat] of Object.entries(lotteryBetTypeStats[lottery])) {
+        // 从第一笔下注中获取详细的betTypeInfo
+        let betTypeInfo = null;
+        if (result.parseData.parsedBets) {
+          for (const bet of result.parseData.parsedBets) {
+            if (bet.lotteryBets?.[lottery]?.betTypeDetails?.[betType]) {
+              betTypeInfo = bet.lotteryBets[lottery].betTypeDetails[betType];
+              break;
+            }
+          }
+        }
+        
         betTypes.push({
           type: betType,
           groups: betStat.groups,
-          amount: betStat.amount
+          amount: betStat.amount,
+          info: betTypeInfo
         });
       }
     }
@@ -750,7 +792,7 @@ const getLotteryStats = (result) => {
       betTypes: betTypes
     };
   }
-  
+
   return stats;
 };
 
@@ -797,16 +839,36 @@ const getErrorDetails = (result) => {
 };
 
 const formatParseTime = (result) => {
-  if (!result?.parseData?.parseTime) {
+  const parseTime = result?.parseData?.parseTime || result?.parseTime;
+  if (!parseTime) {
     return "未知";
   }
   
   try {
-    const parseTime = new Date(result.parseData.parseTime);
+    const parseTime = new Date(result.parseTime);
     return parseTime.toLocaleTimeString();
   } catch (e) {
     return "未知";
   }
+};
+
+// 弹窗相关方法
+const showBetDetail = (lottery, betType, betTypeInfo) => {
+  if (!betTypeInfo) {
+    console.warn('缺少下注类型信息', { lottery, betType });
+    return;
+  }
+  
+  detailModal.value = {
+    isVisible: true,
+    lottery: lottery,
+    betType: betType,
+    betTypeInfo: betTypeInfo
+  };
+};
+
+const closeDetailModal = () => {
+  detailModal.value.isVisible = false;
 };
 
 const clearInput = () => {

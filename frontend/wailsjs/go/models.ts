@@ -2,8 +2,8 @@ export namespace backend {
 	
 	export class BetDetail {
 	    numbers: number[];
-	    amount: number;
-	    groups: number;
+	    // Go type: decimal
+	    amount: any;
 	    description: string;
 	
 	    static createFrom(source: any = {}) {
@@ -13,10 +13,67 @@ export namespace backend {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.numbers = source["numbers"];
-	        this.amount = source["amount"];
-	        this.groups = source["groups"];
+	        this.amount = this.convertValues(source["amount"], null);
 	        this.description = source["description"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class BetModeInfo {
+	    modeName: string;
+	    betDetails: BetDetail[];
+	    groups: number;
+	    // Go type: decimal
+	    amount: any;
+	    // Go type: decimal
+	    unitAmount: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new BetModeInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.modeName = source["modeName"];
+	        this.betDetails = this.convertValues(source["betDetails"], BetDetail);
+	        this.groups = source["groups"];
+	        this.amount = this.convertValues(source["amount"], null);
+	        this.unitAmount = this.convertValues(source["unitAmount"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class BetTypeSummary {
 	    type: string;
@@ -109,7 +166,8 @@ export namespace backend {
 		}
 	}
 	export class BetTypeStat {
-	    amount: number;
+	    // Go type: decimal
+	    amount: any;
 	    groups: number;
 	    count: number;
 	
@@ -119,13 +177,32 @@ export namespace backend {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.amount = source["amount"];
+	        this.amount = this.convertValues(source["amount"], null);
 	        this.groups = source["groups"];
 	        this.count = source["count"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class RoundBetStatistics {
-	    totalAmount: number;
+	    // Go type: decimal
+	    totalAmount: any;
 	    totalGroups: number;
 	    totalBets: number;
 	    lotteryBetTypeStats: Record<string, any>;
@@ -138,7 +215,7 @@ export namespace backend {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.totalAmount = source["totalAmount"];
+	        this.totalAmount = this.convertValues(source["totalAmount"], null);
 	        this.totalGroups = source["totalGroups"];
 	        this.totalBets = source["totalBets"];
 	        this.lotteryBetTypeStats = source["lotteryBetTypeStats"];
@@ -165,7 +242,8 @@ export namespace backend {
 		}
 	}
 	export class BetStatistics {
-	    totalAmount: number;
+	    // Go type: decimal
+	    totalAmount: any;
 	    totalGroups: number;
 	    lotteryCount: number;
 	    lotteryBetTypeStats: Record<string, any>;
@@ -176,33 +254,48 @@ export namespace backend {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.totalAmount = source["totalAmount"];
+	        this.totalAmount = this.convertValues(source["totalAmount"], null);
 	        this.totalGroups = source["totalGroups"];
 	        this.lotteryCount = source["lotteryCount"];
 	        this.lotteryBetTypeStats = source["lotteryBetTypeStats"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
-	export class BetTypeInfo {
+	export class BetTypeDetail {
 	    betType: string;
-	    betDetails: BetDetail[];
+	    modes: Record<string, BetModeInfo>;
 	    totalGroups: number;
-	    totalAmount: number;
-	    isComplex: boolean;
-	    isDrag: boolean;
+	    // Go type: decimal
+	    totalAmount: any;
 	    hasNumbers: boolean;
 	
 	    static createFrom(source: any = {}) {
-	        return new BetTypeInfo(source);
+	        return new BetTypeDetail(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.betType = source["betType"];
-	        this.betDetails = this.convertValues(source["betDetails"], BetDetail);
+	        this.modes = this.convertValues(source["modes"], BetModeInfo, true);
 	        this.totalGroups = source["totalGroups"];
-	        this.totalAmount = source["totalAmount"];
-	        this.isComplex = source["isComplex"];
-	        this.isDrag = source["isDrag"];
+	        this.totalAmount = this.convertValues(source["totalAmount"], null);
 	        this.hasNumbers = source["hasNumbers"];
 	    }
 	
@@ -224,10 +317,33 @@ export namespace backend {
 		    return a;
 		}
 	}
+	export class BetTypeFlags {
+	    hasThreeOfThree: boolean;
+	    hasThreeOfTwo: boolean;
+	    hasTwoOfTwo: boolean;
+	    hasSpecial: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new BetTypeFlags(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hasThreeOfThree = source["hasThreeOfThree"];
+	        this.hasThreeOfTwo = source["hasThreeOfTwo"];
+	        this.hasTwoOfTwo = source["hasTwoOfTwo"];
+	        this.hasSpecial = source["hasSpecial"];
+	    }
+	}
 	export class LotteryBetInfo {
 	    lotteryType: string;
-	    betTypes: Record<string, BetTypeInfo>;
-	    totalAmount: number;
+	    betTypeFlags: BetTypeFlags;
+	    sourceNumbers: number[];
+	    // Go type: decimal
+	    unitAmount: any;
+	    betTypeDetails: Record<string, BetTypeDetail>;
+	    // Go type: decimal
+	    totalAmount: any;
 	    totalGroups: number;
 	
 	    static createFrom(source: any = {}) {
@@ -237,8 +353,11 @@ export namespace backend {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.lotteryType = source["lotteryType"];
-	        this.betTypes = this.convertValues(source["betTypes"], BetTypeInfo, true);
-	        this.totalAmount = source["totalAmount"];
+	        this.betTypeFlags = this.convertValues(source["betTypeFlags"], BetTypeFlags);
+	        this.sourceNumbers = source["sourceNumbers"];
+	        this.unitAmount = this.convertValues(source["unitAmount"], null);
+	        this.betTypeDetails = this.convertValues(source["betTypeDetails"], BetTypeDetail, true);
+	        this.totalAmount = this.convertValues(source["totalAmount"], null);
 	        this.totalGroups = source["totalGroups"];
 	    }
 	
@@ -362,6 +481,7 @@ export namespace backend {
 	        this.special = source["special"];
 	    }
 	}
+	
 	
 	
 	

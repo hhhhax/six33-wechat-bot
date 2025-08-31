@@ -3,6 +3,7 @@ module six33-wechat-bot
 go 1.23
 
 require (
+	github.com/shopspring/decimal v1.4.0
 	github.com/wailsapp/wails/v2 v2.10.2
 	golang.org/x/sys v0.30.0
 )

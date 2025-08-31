@@ -15,34 +15,34 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
 // 检查是否处于调试状态
 func isBeingDebugged() bool {
-	// 使用IsDebuggerPresent检测调试器
-	kernel32 := windows.NewLazySystemDLL("kernel32.dll")
-	isDebuggerPresent := kernel32.NewProc("IsDebuggerPresent")
-	r1, _, _ := isDebuggerPresent.Call()
+	return  false
+	// // 使用IsDebuggerPresent检测调试器
+	// kernel32 := windows.NewLazySystemDLL("kernel32.dll")
+	// isDebuggerPresent := kernel32.NewProc("IsDebuggerPresent")
+	// r1, _, _ := isDebuggerPresent.Call()
 
-	// 如果r1不为0，表示正在被调试
-	if r1 != 0 {
-		return true
-	}
+	// // 如果r1不为0，表示正在被调试
+	// if r1 != 0 {
+	// 	return true
+	// }
 
-	// 尝试其他检测方法，这里使用简单的时间差异检测
-	start := time.Now()
-	time.Sleep(1 * time.Millisecond)
-	elapsed := time.Since(start)
+	// // 尝试其他检测方法，这里使用简单的时间差异检测
+	// start := time.Now()
+	// time.Sleep(1 * time.Millisecond)
+	// elapsed := time.Since(start)
 
-	// 如果时间差异明显大于预期，可能处于调试状态
-	// 调试时单步执行会导致时间差异增大
-	if elapsed > 10*time.Millisecond {
-		return true
-	}
+	// // 如果时间差异明显大于预期，可能处于调试状态
+	// // 调试时单步执行会导致时间差异增大
+	// if elapsed > 10*time.Millisecond {
+	// 	return true
+	// }
 
-	return false
+	// return false
 }
 
 // getMachineGuid retrieves the MachineGuid for Windows.
