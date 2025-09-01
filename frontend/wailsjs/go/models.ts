@@ -284,7 +284,6 @@ export namespace backend {
 	    totalGroups: number;
 	    // Go type: decimal
 	    totalAmount: any;
-	    hasNumbers: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new BetTypeDetail(source);
@@ -296,7 +295,6 @@ export namespace backend {
 	        this.modes = this.convertValues(source["modes"], BetModeInfo, true);
 	        this.totalGroups = source["totalGroups"];
 	        this.totalAmount = this.convertValues(source["totalAmount"], null);
-	        this.hasNumbers = source["hasNumbers"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -338,9 +336,6 @@ export namespace backend {
 	export class LotteryBetInfo {
 	    lotteryType: string;
 	    betTypeFlags: BetTypeFlags;
-	    sourceNumbers: number[];
-	    // Go type: decimal
-	    unitAmount: any;
 	    betTypeDetails: Record<string, BetTypeDetail>;
 	    // Go type: decimal
 	    totalAmount: any;
@@ -354,8 +349,6 @@ export namespace backend {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.lotteryType = source["lotteryType"];
 	        this.betTypeFlags = this.convertValues(source["betTypeFlags"], BetTypeFlags);
-	        this.sourceNumbers = source["sourceNumbers"];
-	        this.unitAmount = this.convertValues(source["unitAmount"], null);
 	        this.betTypeDetails = this.convertValues(source["betTypeDetails"], BetTypeDetail, true);
 	        this.totalAmount = this.convertValues(source["totalAmount"], null);
 	        this.totalGroups = source["totalGroups"];
@@ -385,7 +378,7 @@ export namespace backend {
 	    lotteryBets: Record<string, LotteryBetInfo>;
 	    betStatistics: BetStatistics;
 	    hasError: boolean;
-	    errorMessage: string;
+	    errorMessage: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new SingleBetParsing(source);
@@ -534,6 +527,7 @@ export namespace backend {
 	    old_macau: string[];
 	    hong_kong: string[];
 	    complex: string[];
+	    drag: string[];
 	    each: string[];
 	    per_group: string[];
 	
@@ -547,6 +541,7 @@ export namespace backend {
 	        this.old_macau = source["old_macau"];
 	        this.hong_kong = source["hong_kong"];
 	        this.complex = source["complex"];
+	        this.drag = source["drag"];
 	        this.each = source["each"];
 	        this.per_group = source["per_group"];
 	    }

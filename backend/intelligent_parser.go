@@ -2,13 +2,16 @@ package backend
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/shopspring/decimal"
 )
@@ -18,23 +21,6 @@ var roundIDCounter int64
 // IntelligentBetParser 智能下注解析器
 type IntelligentBetParser struct {
 	config IntelligentBetParserConfig
-}
-
-// NumbersAndAmount 号码和金额结构
-type NumbersAndAmount struct {
-	Numbers []int
-	Amount  float64
-}
-
-// NumberGroupsAndAmount 多组号码和金额结构
-type NumberGroupsAndAmount struct {
-	NumberGroups [][]int
-	Amount       float64
-}
-
-// BetContext 下注上下文
-type BetContext struct {
-	inheritedLotteries []string // 继承的体彩类型
 }
 
 func NewIntelligentBetParser(config IntelligentBetParserConfig) *IntelligentBetParser {
@@ -58,16 +44,14 @@ func (p *IntelligentBetParser) ParseBetString(request BetParseRequest) BetParsin
 		result.ErrorMessages = append(result.ErrorMessages, "输入为空")
 		return result
 	}
-
-	safeLogger.AppendLog(fmt.Sprintf("开始智能解析: %s", request.Input))
-		// 1. 替换关键词（生肖、颜色、尾数）
-	processedText := p.replaceKeywords(request.Input)
+	processedText := request.Input
+	safeLogger.AppendLog(fmt.Sprintf("开始智能解析: %s", processedText))
+	// 1. 替换关键词（生肖、颜色、尾数）
+	processedText = p.replaceKeywords(processedText)
 	safeLogger.AppendLog(fmt.Sprintf("替换关键词: %s", processedText))
 	// 2. 字符串预处理
 	processedText = p.preprocessText(processedText)
-
 	safeLogger.AppendLog(fmt.Sprintf("字符串预处理: %s", processedText))
-	
 
 	// 3. 移除非关键字的所有中文记清理关键词后面的空格
 	processedText = p.removeChineseChars(processedText)
@@ -106,7 +90,7 @@ func (p *IntelligentBetParser) ParseBetString(request BetParseRequest) BetParsin
 	for _, bet := range parsedBets {
 		if bet.HasError {
 			result.HasError = true
-			result.ErrorMessages = append(result.ErrorMessages, bet.ErrorMessage)
+			result.ErrorMessages = append(result.ErrorMessages, bet.ErrorMessage...)
 		}
 	}
 
@@ -120,13 +104,9 @@ func (p *IntelligentBetParser) preprocessText(text string) string {
 	text = strings.ReplaceAll(text, "\n", " ")
 	text = strings.ReplaceAll(text, "\r", " ")
 
-	// 2. 压缩连续分隔符并统一替换为逗号，同时保留第一个分隔符
-	consecutiveRe := regexp.MustCompile(`([./\\\-=:,、+。*])([./\\\-=:,、+。*])+`)
-	text = consecutiveRe.ReplaceAllString(text, "$1")
+	// 2. 智能处理分隔符
+	text = p.smartReplaceSeparators(text)
 
-	separatorRe := regexp.MustCompile(`[./\\\-=:,、+。*]+`)
-	// `ReplaceAllString` 一次性完成所有替换和压缩
-	text = separatorRe.ReplaceAllString(text, "-")
 
 	// 定义你想要替换的符号字符串
 	symbolsToReplace := "【】[]{}“‘”’" // 可以在这里添加你需要的任何符号
@@ -137,7 +117,7 @@ func (p *IntelligentBetParser) preprocessText(text string) string {
 	text = invalidCharsRe.ReplaceAllString(text, " ")
 
 	// 3. 处理分隔符后的空格：保留分隔符，移除空格
-	spaceAfterSeparatorRe := regexp.MustCompile(`([./\\\-=:,、+。*])\s+`)
+	spaceAfterSeparatorRe := regexp.MustCompile(`([./\\\-=:,，、+。*])\s+`)
 	text = spaceAfterSeparatorRe.ReplaceAllString(text, "$1")
 
 	// 4. 清理多余空格
@@ -145,6 +125,84 @@ func (p *IntelligentBetParser) preprocessText(text string) string {
 	text = spaceRe.ReplaceAllString(text, " ")
 
 	return strings.TrimSpace(text)
+}
+
+// smartReplaceSeparators 智能替换分隔符
+func (p *IntelligentBetParser) smartReplaceSeparators(text string) string {
+	// 定义所有分隔符（同一级别）
+	separators := map[rune]bool{
+		'.': true, '/': true, '\\': true, '-': true, '=': true, ':': true,
+		',': true, '，': true, '、': true, '+': true, '。': true, '*': true,
+	}
+	
+	result := make([]rune, 0, len(text))
+	runes := []rune(text)
+	
+	for i := 0; i < len(runes); i++ {
+		char := runes[i]
+		
+		// 如果是分隔符
+		if separators[char] {
+			// 处理连续分隔符
+			separatorGroup := []rune{char}
+			j := i + 1
+			
+			// 收集连续的分隔符
+			for j < len(runes) && separators[runes[j]] {
+				separatorGroup = append(separatorGroup, runes[j])
+				j++
+			}
+			
+			// 判断用什么替换
+			replacement := p.decideSeparatorReplacement(runes, i, separatorGroup)
+			result = append(result, []rune(replacement)...)
+			
+			// 跳过已处理的分隔符
+			i = j - 1
+		} else {
+			result = append(result, char)
+		}
+	}
+	
+	return string(result)
+}
+
+// decideSeparatorReplacement 决定分隔符的替换方式
+func (p *IntelligentBetParser) decideSeparatorReplacement(runes []rune, startPos int, separatorGroup []rune) string {
+	// 1. 检查前后是否为数字
+	prevIsDigit := false
+	if startPos > 0 && unicode.IsDigit(runes[startPos-1]) {
+		prevIsDigit = true
+	}
+	
+	nextIsDigit := false
+	nextPos := startPos + len(separatorGroup)
+	if nextPos < len(runes) && unicode.IsDigit(runes[nextPos]) {
+		nextIsDigit = true
+	}
+	
+	// 2. 如果前后都是数字，且分隔符组是同一类型，替换为"-"
+	if prevIsDigit && nextIsDigit && p.isSameSeparatorType(separatorGroup) {
+		return "-"
+	}
+	
+	// 3. 其他情况替换为空格
+	return " "
+}
+
+// isSameSeparatorType 检查分隔符组是否为同一类型
+func (p *IntelligentBetParser) isSameSeparatorType(separatorGroup []rune) bool {
+	if len(separatorGroup) == 0 {
+		return false
+	}
+	
+	firstSep := separatorGroup[0]
+	for _, sep := range separatorGroup {
+		if sep != firstSep {
+			return false
+		}
+	}
+	return true
 }
 
 // replaceKeywords 替换关键词（生肖、颜色、尾数）
@@ -176,16 +234,39 @@ func (p *IntelligentBetParser) replaceKeywords(text string) string {
 		}
 	}
 
-	// 替换关键词
+	// 替换关键词,且默认不加
 	for _, keyword := range keywords {
 		if numbers, exists := allKeywords[keyword]; exists {
 			numbersStr := make([]string, len(numbers))
 			for i, num := range numbers {
 				numbersStr[i] = fmt.Sprintf("%02d", num)
 			}
-			replacement := strings.Join(numbersStr, ",")
-			replacement = "," + replacement
-			text = strings.ReplaceAll(text, keyword, replacement)
+			replacement := strings.Join(numbersStr, "-")
+
+			var newText strings.Builder
+			lastIndex := 0
+
+			for {
+				index := strings.Index(text[lastIndex:], keyword)
+				if index == -1 {
+					break
+				}
+
+				realIndex := lastIndex + index
+
+				newText.WriteString(text[lastIndex:realIndex])
+
+				if realIndex > 0 && unicode.IsDigit(rune(text[realIndex-1])) {
+					newText.WriteString("-" + replacement)
+				} else {
+					newText.WriteString(replacement)
+				}
+
+				lastIndex = realIndex + len(keyword)
+			}
+
+			newText.WriteString(text[lastIndex:])
+			text = newText.String()
 		}
 	}
 
@@ -231,6 +312,15 @@ func (p *IntelligentBetParser) removeChineseChars(text string) string {
 	// 先用占位符替换要保留的关键词
 	placeholders := make(map[string]string)
 	for i, keyword := range preservedKeywords {
+		if strings.Contains(text, "-"+keyword+"-") {
+			text = strings.ReplaceAll(text, "-"+keyword+"-", keyword)
+		}
+		if strings.Contains(text, "-"+keyword) {
+			text = strings.ReplaceAll(text, "-"+keyword, keyword)
+		}
+		if strings.Contains(text, keyword+"-") {
+			text = strings.ReplaceAll(text, keyword+"-", keyword)
+		}
 		placeholder := fmt.Sprintf("__PRESERVE_%d__", i)
 		if strings.Contains(text, keyword) {
 			text = strings.ReplaceAll(text, keyword, placeholder)
@@ -415,41 +505,110 @@ func chineseToNumber(chinese string) (int, bool) {
 	return 0, false // 无法转换
 }
 
-// segmentBets 分割为多笔下注
+// segmentBets 通过金额分割为多笔下注
 func (p *IntelligentBetParser) segmentBets(text string) []string {
-	// 识别结束标识符
-	endKeywords := p.config.EndKeywords
+	// 金额模式（按优先级排序）
+	patterns := []string{
+		`各(\d+)`,  // 各20
+		`每组(\d+)`, // 每组20
+	}
 
 	segments := make([]string, 0)
-	currentSegment := ""
 
-	// 简单实现：按结束关键词分割
-	words := strings.Fields(text)
-	for _, word := range words {
-		currentSegment += word + " "
+	// 编译所有正则表达式
+	compiledPatterns := make([]*regexp.Regexp, len(patterns))
+	for i, pattern := range patterns {
+		compiledPatterns[i] = regexp.MustCompile(pattern)
+	}
 
-		// 检查是否包含结束关键词
-		hasEndKeyword := false
-		for k := range endKeywords {
-			if strings.Contains(word, k) {
-				segments = append(segments, strings.TrimSpace(currentSegment))
-				currentSegment = ""
-				hasEndKeyword = true
-				break
+	// 查找所有金额位置
+	amountPositions := make([]AmountMatch, 0)
+
+	for _, re := range compiledPatterns {
+		matches := re.FindAllStringSubmatchIndex(text, -1)
+		for _, match := range matches {
+			if len(match) >= 4 { // 确保有捕获组
+				amountPositions = append(amountPositions, AmountMatch{
+					Start: match[0],
+					End:   match[1],
+				})
+			}
+		}
+	}
+
+	// 如果没有找到金额，返回整个文本作为一段
+	if len(amountPositions) == 0 {
+		return []string{strings.TrimSpace(text)}
+	}
+
+	// 按位置排序
+	sort.Slice(amountPositions, func(i, j int) bool {
+		return amountPositions[i].Start < amountPositions[j].Start
+	})
+
+	// 去重相同位置的匹配
+	uniquePositions := make([]AmountMatch, 0)
+	for i, pos := range amountPositions {
+		if i == 0 || pos.Start != amountPositions[i-1].Start {
+			uniquePositions = append(uniquePositions, pos)
+		}
+	}
+
+	// 根据金额位置分割文本
+	lastEnd := 0
+	for i, pos := range uniquePositions {
+		// 分割点：当前金额表达式的结束位置
+		splitPoint := pos.End
+
+		// 如果不是第一个金额，从上一个分割点开始
+		if i > 0 {
+			segmentText := text[lastEnd:splitPoint]
+			segmentText = p.cleanSegment(segmentText)
+			if segmentText != "" {
+				segments = append(segments, segmentText)
+			}
+		} else {
+			// 第一个金额，从文本开头到金额结束
+			segmentText := text[0:splitPoint]
+			segmentText = p.cleanSegment(segmentText)
+			if segmentText != "" {
+				segments = append(segments, segmentText)
 			}
 		}
 
-		if hasEndKeyword {
-			continue
+		lastEnd = splitPoint
+	}
+
+	// 处理最后一段（如果有剩余文本）
+	if lastEnd < len(text) {
+		segmentText := text[lastEnd:]
+		segmentText = p.cleanSegment(segmentText)
+		if segmentText != "" {
+			segments = append(segments, segmentText)
 		}
 	}
 
-	// 处理最后一段
-	if strings.TrimSpace(currentSegment) != "" {
-		segments = append(segments, strings.TrimSpace(currentSegment))
+	return segments
+}
+
+// cleanSegment 清理分段文本，移除前后的"-"符号
+func (p *IntelligentBetParser) cleanSegment(segment string) string {
+	// 去除首尾空白
+	segment = strings.TrimSpace(segment)
+
+	// 移除开头的"-"符号
+	for strings.HasPrefix(segment, "-") {
+		segment = strings.TrimPrefix(segment, "-")
+		segment = strings.TrimSpace(segment)
 	}
 
-	return segments
+	// 移除结尾的"-"符号
+	for strings.HasSuffix(segment, "-") {
+		segment = strings.TrimSuffix(segment, "-")
+		segment = strings.TrimSpace(segment)
+	}
+
+	return segment
 }
 
 // identifyLotteries 识别体彩类型（从最多字开始替换）
@@ -473,21 +632,8 @@ func (p *IntelligentBetParser) identifyLotteries(text string) []string {
 		// 从最长别名开始匹配
 		for _, alias := range sortedAliases {
 			if strings.Contains(text, alias) {
+				text = strings.ReplaceAll(text, alias, "")
 				result = append(result, lotteryType)
-				break
-			}
-		}
-	}
-	return result
-}
-
-// identifyBetTypes 识别下注类型
-func (p *IntelligentBetParser) identifyBetTypes(text string) []string {
-	result := make([]string, 0)
-	for betType, aliases := range p.config.BetTypeAliases {
-		for _, alias := range aliases {
-			if strings.Contains(text, alias) {
-				result = append(result, betType)
 				break
 			}
 		}
@@ -500,379 +646,366 @@ func (p *IntelligentBetParser) identifyBetTypeFlags(text string) BetTypeFlags {
 	flags := BetTypeFlags{}
 
 	// 检查三中三关键词
-	if p.containsBetTypeKeywords(text, "三中三") {
+	if strings.Contains(text, "三中三") {
 		flags.HasThreeOfThree = true
 	}
 
 	// 检查三中二关键词
-	if p.containsBetTypeKeywords(text, "三中二") {
+	if strings.Contains(text, "三中二") {
 		flags.HasThreeOfTwo = true
 	}
 
 	// 检查二中二关键词
-	if p.containsBetTypeKeywords(text, "二中二") {
+	if strings.Contains(text, "二中二") {
 		flags.HasTwoOfTwo = true
 	}
 
 	// 检查特碰关键词
-	if p.containsBetTypeKeywords(text, "特碰") {
+	if strings.Contains(text, "特碰") {
 		flags.HasSpecial = true
 	}
 
 	return flags
 }
 
-// containsBetTypeKeywords 检查是否包含指定下注类型的关键词
-func (p *IntelligentBetParser) containsBetTypeKeywords(text, betType string) bool {
-	if aliases, exists := p.config.BetTypeAliases[betType]; exists {
-		for _, alias := range aliases {
-			if strings.Contains(text, alias) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // processBetType 处理单个下注类型，返回该类型的所有模式信息
 func (p *IntelligentBetParser) processBetType(
 	betType string,
-	sourceNumbers []int,
-	unitAmount decimal.Decimal,
 	text string,
-) BetTypeDetail {
+) (*BetTypeDetail, error) {
 
-	detail := BetTypeDetail{
+	detail := &BetTypeDetail{
 		BetType:     betType,
 		Modes:       make(map[string]BetModeInfo),
 		TotalGroups: 0,
 		TotalAmount: decimal.NewFromInt(0),
-		HasNumbers:  len(sourceNumbers) > 0,
+	}
+	// 检查并处理拖码模式
+	if p.isDragBet(text) {
+		modeInfo, err := p.processDragMode(betType, text)
+		if err != nil {
+			return nil, err
+		}
+		detail.Modes["drag"] = *modeInfo
+		detail.TotalGroups += modeInfo.Groups
+		detail.TotalAmount = detail.TotalAmount.Add(modeInfo.Amount)
 	}
 
 	// 检查并处理复式模式
-	if p.isComplexBet(text) {
-		modeInfo := p.processComplexMode(betType, sourceNumbers, unitAmount)
-		detail.Modes["complex"] = modeInfo
+	if p.isComplexBet(betType, text) {
+		modeInfo, err := p.processComplexMode(betType, text)
+		if err != nil {
+			return nil, err
+		}
+		detail.Modes["complex"] = *modeInfo
 		detail.TotalGroups += modeInfo.Groups
 		detail.TotalAmount = detail.TotalAmount.Add(modeInfo.Amount)
 	}
 
-	// 检查并处理拖码模式
-	if p.isDragBet(text) {
-		modeInfo := p.processDragMode(betType, sourceNumbers, unitAmount, text)
-		detail.Modes["drag"] = modeInfo
-		detail.TotalGroups += modeInfo.Groups
-		detail.TotalAmount = detail.TotalAmount.Add(modeInfo.Amount)
-	}
-
-	// 检查并处理多组独立模式
-	multiGroups := p.extractMultipleNumberGroups(text)
-	if len(multiGroups.NumberGroups) > 1 {
-		modeInfo := p.processMultipleMode(betType, multiGroups, unitAmount)
-		detail.Modes["multiple"] = modeInfo
-		detail.TotalGroups += modeInfo.Groups
-		detail.TotalAmount = detail.TotalAmount.Add(modeInfo.Amount)
-	} else if !p.isComplexBet(text) && !p.isDragBet(text) {
-		// 处理单组模式（当没有其他模式时）
-		modeInfo := p.processSingleMode(betType, sourceNumbers, unitAmount)
-		detail.Modes["single"] = modeInfo
-		detail.TotalGroups += modeInfo.Groups
-		detail.TotalAmount = detail.TotalAmount.Add(modeInfo.Amount)
-	}
-
-	return detail
+	return detail, nil
 }
 
-// processComplexMode 处理复式模式
+// processComplexMode 处理复式
 func (p *IntelligentBetParser) processComplexMode(
 	betType string,
-	sourceNumbers []int,
-	unitAmount decimal.Decimal,
-) BetModeInfo {
+	text string,
+) (*BetModeInfo, error) {
+	unitAmount := p.extractAmountSmart(text)
+	if unitAmount.IsZero() {
+		return nil, errors.New("存在复式下注，但不存在下注金额,请在下注金额前手动添加'各'或'每组'表示每组金额")
+	}
 
-	modeInfo := BetModeInfo{
+	modeInfo := &BetModeInfo{
 		ModeName:   "complex",
 		BetDetails: make([]BetDetail, 0),
 		UnitAmount: unitAmount,
 	}
 
-	var combinations [][]int
+	var combinations []BetCombination
 
 	switch betType {
 	case "三中三":
-		combinations = p.generateNCombinations(sourceNumbers, 3)
+		combinations, _ = p.generateNCombinations(text, 3)
 	case "二中二":
-		combinations = p.generateNCombinations(sourceNumbers, 2)
+		combinations, _ = p.generateNCombinations(text, 2)
 	case "三中二":
-		combinations = p.generateNCombinations(sourceNumbers, 3) // 三中二也是选3个号码
+		combinations, _ = p.generateNCombinations(text, 3)
 	case "特碰":
-		combinations = p.generateNCombinations(sourceNumbers, 2)
+		combinations, _ = p.generateNCombinations(text, 2)
+	default:
+		return nil, fmt.Errorf("不支持的下注类型: %s", betType)
+	}
+
+	// 如果没有找到组合，返回错误
+	if combinations == nil {
+		return nil, errors.New("未找到有效的下注组合")
 	}
 
 	for _, combo := range combinations {
 		modeInfo.BetDetails = append(modeInfo.BetDetails, BetDetail{
-			Numbers:     combo,
+			Numbers:     combo.Numbers,
 			Amount:      unitAmount,
-			Description: fmt.Sprintf("%s 复式", betType),
+			Description: fmt.Sprintf("复式%s: %s", betType, combo.OriginalText),
 		})
 	}
 
 	modeInfo.Groups = len(combinations)
 	modeInfo.Amount = unitAmount.Mul(decimal.NewFromInt(int64(len(combinations))))
 
-	return modeInfo
+	return modeInfo, nil
 }
 
-// processDragMode 处理拖码模式
+// processDragMode 处理拖码模式，支持多组输入
 func (p *IntelligentBetParser) processDragMode(
 	betType string,
-	sourceNumbers []int,
-	unitAmount decimal.Decimal,
 	text string,
-) BetModeInfo {
+) (*BetModeInfo, error) {
+	unitAmount := p.extractAmountSmart(text)
+	if unitAmount.IsZero() {
+		return nil, errors.New("存在拖类型下注，但不存在下注金额,请在下注金额前手动添加'各'或'每组'表示每组金额")
+	}
 
-	modeInfo := BetModeInfo{
+	modeInfo := &BetModeInfo{
 		ModeName:   "drag",
 		BetDetails: make([]BetDetail, 0),
 		UnitAmount: unitAmount,
 	}
 
-	// 解析拖码：如 "1,2,3拖10,11,12拖18,20,22"
-	dragGroups := p.parseDragGroups(text)
+	// 使用正则表达式按空格或逗号分割整个文本，以处理多组拖码
+	reDragGroups := regexp.MustCompile(`(\d{1,2}(?:-\d{1,2})*拖\d{1,2}(?:-\d{1,2})*(?:拖\d{1,2}(?:-\d{1,2})*)?)`)
+	dragStrings := reDragGroups.FindAllString(text, -1)
 
-	// 生成拖码组合（笛卡尔积）
-	dragCombinations := p.generateDragCombinations(dragGroups, betType)
-
-	for _, combo := range dragCombinations {
-		modeInfo.BetDetails = append(modeInfo.BetDetails, BetDetail{
-			Numbers:     combo,
-			Amount:      unitAmount,
-			Description: fmt.Sprintf("%s 拖码", betType),
-		})
+	if len(dragStrings) == 0 {
+		return nil, errors.New("未找到有效的拖码组合")
 	}
 
-	modeInfo.Groups = len(dragCombinations)
-	modeInfo.Amount = unitAmount.Mul(decimal.NewFromInt(int64(len(dragCombinations))))
+	var totalCombinations int64 = 0
 
-	return modeInfo
+	for _, dragString := range dragStrings {
+		// 解析单个拖码组，如 "1-2-3拖10-11-12"
+		dragGroups, err := p.parseDragGroups(dragString)
+		if err != nil {
+			return nil, err
+		}
+
+		// 根据下注类型确定需要的数字个数
+		var requiredCount int
+		switch betType {
+		case "三中三", "三中二":
+			requiredCount = 3
+		case "二中二", "特碰":
+			requiredCount = 2
+		default:
+			requiredCount = 2
+		}
+
+		// 生成拖码组合（笛卡尔积）
+		combinations, _ := p.generateCartesianProduct(dragGroups, requiredCount)
+
+		for _, combo := range combinations {
+			modeInfo.BetDetails = append(modeInfo.BetDetails, BetDetail{
+				Numbers:     combo,
+				Amount:      unitAmount,
+				Description: fmt.Sprintf("%s拖码: %s", betType, dragString),
+			})
+		}
+		totalCombinations += int64(len(combinations))
+	}
+
+	modeInfo.Groups = int(totalCombinations)
+	modeInfo.Amount = unitAmount.Mul(decimal.NewFromInt(totalCombinations))
+
+	return modeInfo, nil
 }
 
-// processMultipleMode 处理多组独立模式
-func (p *IntelligentBetParser) processMultipleMode(
-	betType string,
-	multiGroups NumberGroupsAndAmount,
-	unitAmount decimal.Decimal,
-) BetModeInfo {
+// generateNCombinations 完整优化版本
+func (p *IntelligentBetParser) generateNCombinations(text string, n int) ([]BetCombination, error) {
+	// 使用最简单的正则，完全兼容Go
+	re := regexp.MustCompile(`\d{1,2}(?:-\d{1,2})*`)
 
-	modeInfo := BetModeInfo{
-		ModeName:   "multiple",
-		BetDetails: make([]BetDetail, 0),
-		UnitAmount: unitAmount,
+	// 找到所有匹配及其位置
+	matchIndices := re.FindAllStringIndex(text, -1)
+
+	var allCombinations []BetCombination
+	for _, indices := range matchIndices {
+		start, end := indices[0], indices[1]
+		match := text[start:end]
+
+		// 检查前后字符，过滤掉"拖"字相邻或数字相邻的情况
+		shouldSkip := false
+
+		// 检查前一个字符
+		if start > 0 {
+			// 安全地获取前一个字符（处理UTF-8）
+			beforeText := text[:start]
+			if len(beforeText) > 0 {
+				runes := []rune(beforeText)
+				if len(runes) > 0 {
+					prevRune := runes[len(runes)-1]
+					if prevRune == '拖' || unicode.IsDigit(prevRune) {
+						shouldSkip = true
+					}
+				}
+			}
+		}
+
+		// 检查后一个字符
+		if end < len(text) && !shouldSkip {
+			// 安全地获取后一个字符（处理UTF-8）
+			afterText := text[end:]
+			if len(afterText) > 0 {
+				runes := []rune(afterText)
+				if len(runes) > 0 {
+					nextRune := runes[0]
+					if nextRune == '拖' || unicode.IsDigit(nextRune) {
+						shouldSkip = true
+					}
+				}
+			}
+		}
+
+		if shouldSkip {
+			continue
+		}
+
+		// 分割字符串得到单个数字
+		numStrings := strings.Split(match, "-")
+		if len(numStrings) < n {
+			continue
+		}
+
+		// 将字符串转换为整数
+		var numbers []int
+		for _, s := range numStrings {
+			num, err := strconv.Atoi(s)
+			if err != nil {
+				continue
+			}
+			numbers = append(numbers, num)
+		}
+
+		// 确保组合的数字个数正好是n
+		if len(numbers) == n {
+			allCombinations = append(allCombinations, BetCombination{
+				Numbers:      numbers,
+				OriginalText: match,
+			})
+		} else if len(numbers) > n {
+			// 如果组合数字多于n个，则生成所有n个数字的组合
+			combinations, err := p.getCombinations(numbers, n)
+			if err != nil {
+				return nil, err
+			}
+			for _, combo := range combinations {
+				allCombinations = append(allCombinations, BetCombination{
+					Numbers:      combo,
+					OriginalText: match,
+				})
+			}
+		}
 	}
 
-	for i, numberGroup := range multiGroups.NumberGroups {
-		modeInfo.BetDetails = append(modeInfo.BetDetails, BetDetail{
-			Numbers:     numberGroup,
-			Amount:      unitAmount,
-			Description: fmt.Sprintf("%s 第%d组", betType, i+1),
-		})
+	if len(allCombinations) == 0 {
+		return nil, errors.New("未找到有效的下注组合")
 	}
 
-	modeInfo.Groups = len(multiGroups.NumberGroups)
-	modeInfo.Amount = unitAmount.Mul(decimal.NewFromInt(int64(len(multiGroups.NumberGroups))))
-
-	return modeInfo
+	return allCombinations, nil
 }
 
-// processSingleMode 处理单组模式
-func (p *IntelligentBetParser) processSingleMode(
-	betType string,
-	sourceNumbers []int,
-	unitAmount decimal.Decimal,
-) BetModeInfo {
-
-	modeInfo := BetModeInfo{
-		ModeName:   "single",
-		BetDetails: make([]BetDetail, 0),
-		UnitAmount: unitAmount,
-		Groups:     1,
-		Amount:     unitAmount,
-	}
-
-	modeInfo.BetDetails = append(modeInfo.BetDetails, BetDetail{
-		Numbers:     sourceNumbers,
-		Amount:      unitAmount,
-		Description: fmt.Sprintf("%s 单组", betType),
-	})
-
-	return modeInfo
-}
-
-// generateNCombinations 生成N个数的组合（C(n,r)）
-func (p *IntelligentBetParser) generateNCombinations(numbers []int, r int) [][]int {
-	if len(numbers) < r || r <= 0 {
-		return [][]int{}
+// getCombinations 从一组数字中生成所有n个数字的组合
+func (p *IntelligentBetParser) getCombinations(numbers []int, n int) ([][]int, error) {
+	if n < 1 || n > len(numbers) {
+		return nil, fmt.Errorf("无效的组合数n: %d", n)
 	}
 
 	var result [][]int
+	var f func(start int, combo []int)
 
-	// 递归生成组合
-	var generate func(start int, current []int)
-	generate = func(start int, current []int) {
-		if len(current) == r {
-			// 复制当前组合
-			combination := make([]int, len(current))
-			copy(combination, current)
-			result = append(result, combination)
+	f = func(start int, combo []int) {
+		if len(combo) == n {
+			temp := make([]int, n)
+			copy(temp, combo)
+			result = append(result, temp)
 			return
 		}
 
-		for i := start; i <= len(numbers)-(r-len(current)); i++ {
-			current = append(current, numbers[i])
-			generate(i+1, current)
-			current = current[:len(current)-1]
+		for i := start; i < len(numbers); i++ {
+			f(i+1, append(combo, numbers[i]))
 		}
 	}
 
-	generate(0, make([]int, 0, r))
-	return result
+	f(0, []int{})
+	return result, nil
 }
 
-// parseDragGroups 解析拖码组（如"1,2,3拖10,11,12拖18,20,22"）
-func (p *IntelligentBetParser) parseDragGroups(text string) [][]int {
+// parseDragGroups 解析单个拖码组，如"1-2-3拖10-11-12"
+func (p *IntelligentBetParser) parseDragGroups(text string) ([][]int, error) {
 	var groups [][]int
 
-	// 查找拖码标识符
-	dragKeywords := []string{"拖", "tuo"}
-
-	parts := strings.Split(text, ",")
-	currentGroup := make([]int, 0)
+	// 使用正则表达式按 "拖" 分割字符串，并提取数字
+	re := regexp.MustCompile(`\b\d{1,2}(?:-\d{1,2})*\b`)
+	parts := strings.Split(text, "拖")
 
 	for _, part := range parts {
-		part = strings.TrimSpace(part)
-
-		// 检查是否包含拖码关键词
-		hasDragKeyword := false
-		for _, keyword := range dragKeywords {
-			if strings.Contains(part, keyword) {
-				hasDragKeyword = true
-				// 移除拖码关键词，提取数字
-				part = strings.ReplaceAll(part, keyword, "")
-				break
-			}
-		}
-
-		// 提取数字
-		re := regexp.MustCompile(`\d+`)
 		matches := re.FindAllString(part, -1)
-
+		var groupNumbers []int
 		for _, match := range matches {
-			if num, err := strconv.Atoi(match); err == nil {
-				currentGroup = append(currentGroup, num)
+			numStrings := strings.Split(match, "-")
+			for _, s := range numStrings {
+				if num, err := strconv.Atoi(s); err == nil {
+					groupNumbers = append(groupNumbers, num)
+				}
 			}
 		}
-
-		// 如果发现拖码关键词，则当前组结束
-		if hasDragKeyword && len(currentGroup) > 0 {
-			groups = append(groups, currentGroup)
-			currentGroup = make([]int, 0)
+		if len(groupNumbers) > 0 {
+			groups = append(groups, groupNumbers)
 		}
 	}
 
-	// 处理最后一组
-	if len(currentGroup) > 0 {
-		groups = append(groups, currentGroup)
+	if len(groups) == 0 {
+		return nil, errors.New("未找到有效的拖码组")
 	}
 
-	return groups
+	return groups, nil
 }
 
-// generateDragCombinations 生成拖码组合（笛卡尔积）
-func (p *IntelligentBetParser) generateDragCombinations(dragGroups [][]int, betType string) [][]int {
-	if len(dragGroups) == 0 {
-		return [][]int{}
-	}
-
-	// 根据下注类型确定需要的数字个数
-	var requiredCount int
-	switch betType {
-	case "三中三", "三中二":
-		requiredCount = 3
-	case "二中二", "特碰":
-		requiredCount = 2
-	default:
-		requiredCount = 2
-	}
-
+// generateCartesianProduct 生成笛卡尔积
+func (p *IntelligentBetParser) generateCartesianProduct(sets [][]int, requiredSize int) ([][]int, error) {
 	var result [][]int
+	if len(sets) == 0 {
+		return result, nil
+	}
 
 	// 递归生成笛卡尔积
-	var generate func(groupIndex int, current []int)
-	generate = func(groupIndex int, current []int) {
-		if len(current) == requiredCount {
-			// 复制当前组合
-			combination := make([]int, len(current))
-			copy(combination, current)
-			result = append(result, combination)
+	var generate func(index int, currentCombo []int)
+	generate = func(index int, currentCombo []int) {
+		if index == len(sets) {
+			if len(currentCombo) == requiredSize {
+				temp := make([]int, requiredSize)
+				copy(temp, currentCombo)
+				result = append(result, temp)
+			}
 			return
 		}
 
-		if groupIndex >= len(dragGroups) {
-			return
-		}
-
-		// 从当前组选择一个数字
-		for _, num := range dragGroups[groupIndex] {
-			// 检查是否重复
-			duplicate := false
-			for _, existing := range current {
-				if existing == num {
-					duplicate = true
+		for _, num := range sets[index] {
+			// 确保组合中没有重复数字
+			isDuplicate := false
+			for _, cNum := range currentCombo {
+				if cNum == num {
+					isDuplicate = true
 					break
 				}
 			}
 
-			if !duplicate {
-				current = append(current, num)
-				generate(groupIndex+1, current)
-				current = current[:len(current)-1]
+			if !isDuplicate {
+				generate(index+1, append(currentCombo, num))
 			}
 		}
 	}
 
-	generate(0, make([]int, 0, requiredCount))
-	return result
-}
-
-// extractSourceNumbersAndAmount 提取源号码和单组金额
-func (p *IntelligentBetParser) extractSourceNumbersAndAmount(text string, context *BetContext) ([]int, decimal.Decimal) {
-	// 使用现有的智能提取逻辑
-	numbersAndAmount := p.smartExtractNumbersAndAmount(text, []string{}, false, false)
-
-	// 转换为decimal类型
-	unitAmount := decimal.NewFromFloat(numbersAndAmount.Amount)
-
-	return numbersAndAmount.Numbers, unitAmount
-}
-
-// extractMultipleNumberGroups 提取多组号码（临时实现）
-func (p *IntelligentBetParser) extractMultipleNumberGroups(text string) NumberGroupsAndAmount {
-	// 简单实现：如果包含复式关键词则返回空，否则使用单组
-	if p.isComplexBet(text) || p.isDragBet(text) {
-		return NumberGroupsAndAmount{NumberGroups: [][]int{}, Amount: 0}
-	}
-
-	// 使用现有的号码提取逻辑
-	numbersAndAmount := p.smartExtractNumbersAndAmount(text, []string{}, false, false)
-	if len(numbersAndAmount.Numbers) > 0 {
-		return NumberGroupsAndAmount{
-			NumberGroups: [][]int{numbersAndAmount.Numbers},
-			Amount:       numbersAndAmount.Amount,
-		}
-	}
-
-	return NumberGroupsAndAmount{NumberGroups: [][]int{}, Amount: 0}
+	generate(0, []int{})
+	return result, nil
 }
 
 // parseSingleBet 解析单笔下注（新优化版本）
@@ -881,9 +1014,10 @@ func (p *IntelligentBetParser) parseSingleBet(betID string, segment string, cont
 		BetID:        betID,
 		OriginalText: segment,
 		LotteryBets:  make(map[string]LotteryBetInfo),
+		ErrorMessage: make([]string, 0),
 	}
 
-	// 1. 识别体彩类型
+	// 1. 识别体彩类型,并移除相关字符串
 	lotteries := p.identifyLotteries(segment)
 	if len(lotteries) == 0 && len(context.inheritedLotteries) > 0 {
 		lotteries = context.inheritedLotteries
@@ -892,72 +1026,80 @@ func (p *IntelligentBetParser) parseSingleBet(betID string, segment string, cont
 		lotteries = []string{"新澳"}
 	}
 
-	// 2. 提取源号码和金额
-	sourceNumbers, unitAmount := p.extractSourceNumbersAndAmount(segment, context)
-
-	// 3. 识别下注类型标识
+	// 2. 识别下注类型标识
 	betTypeFlags := p.identifyBetTypeFlags(segment)
 
-	// 4. 为每个体彩处理
+	// 3. 为每个体彩处理
 	for _, lottery := range lotteries {
 		lotteryInfo := LotteryBetInfo{
 			LotteryType:    lottery,
 			BetTypeFlags:   betTypeFlags,
-			SourceNumbers:  sourceNumbers,
-			UnitAmount:     unitAmount,
 			BetTypeDetails: make(map[string]BetTypeDetail),
 			TotalAmount:    decimal.NewFromInt(0),
 			TotalGroups:    0,
 		}
 
-		// 5. 处理每种存在的下注类型
+		// 4. 处理每种存在的下注类型
 		if betTypeFlags.HasThreeOfThree {
-			detail := p.processBetType("三中三", sourceNumbers, unitAmount, segment)
-			lotteryInfo.BetTypeDetails["三中三"] = detail
-			lotteryInfo.TotalAmount = lotteryInfo.TotalAmount.Add(detail.TotalAmount)
-			lotteryInfo.TotalGroups += detail.TotalGroups
+			detail, err := p.processBetType("三中三", segment)
+			if err != nil {
+				result.HasError = true
+				result.ErrorMessage = append(result.ErrorMessage, err.Error())
+				return result
+			} else {
+				lotteryInfo.BetTypeDetails["三中三"] = *detail
+				lotteryInfo.TotalAmount = lotteryInfo.TotalAmount.Add(detail.TotalAmount)
+				lotteryInfo.TotalGroups += detail.TotalGroups
+			}
 		}
 
 		if betTypeFlags.HasTwoOfTwo {
-			detail := p.processBetType("二中二", sourceNumbers, unitAmount, segment)
-			lotteryInfo.BetTypeDetails["二中二"] = detail
-			lotteryInfo.TotalAmount = lotteryInfo.TotalAmount.Add(detail.TotalAmount)
-			lotteryInfo.TotalGroups += detail.TotalGroups
+			detail, err := p.processBetType("二中二", segment)
+			if err != nil {
+				result.HasError = true
+				result.ErrorMessage = append(result.ErrorMessage, err.Error())
+				return result
+			} else {
+				lotteryInfo.BetTypeDetails["二中二"] = *detail
+				lotteryInfo.TotalAmount = lotteryInfo.TotalAmount.Add(detail.TotalAmount)
+				lotteryInfo.TotalGroups += detail.TotalGroups
+			}
 		}
 
 		if betTypeFlags.HasThreeOfTwo {
-			detail := p.processBetType("三中二", sourceNumbers, unitAmount, segment)
-			lotteryInfo.BetTypeDetails["三中二"] = detail
-			lotteryInfo.TotalAmount = lotteryInfo.TotalAmount.Add(detail.TotalAmount)
-			lotteryInfo.TotalGroups += detail.TotalGroups
+			detail, err := p.processBetType("三中二", segment)
+			if err != nil {
+				result.HasError = true
+				result.ErrorMessage = append(result.ErrorMessage, err.Error())
+				return result
+			} else {
+				lotteryInfo.BetTypeDetails["三中二"] = *detail
+				lotteryInfo.TotalAmount = lotteryInfo.TotalAmount.Add(detail.TotalAmount)
+				lotteryInfo.TotalGroups += detail.TotalGroups
+			}
 		}
 
 		if betTypeFlags.HasSpecial {
-			detail := p.processBetType("特碰", sourceNumbers, unitAmount, segment)
-			lotteryInfo.BetTypeDetails["特碰"] = detail
-			lotteryInfo.TotalAmount = lotteryInfo.TotalAmount.Add(detail.TotalAmount)
-			lotteryInfo.TotalGroups += detail.TotalGroups
+			detail, err := p.processBetType("特碰", segment)
+			if err != nil {
+				result.HasError = true
+				result.ErrorMessage = append(result.ErrorMessage, err.Error())
+				return result
+			} else {
+				lotteryInfo.BetTypeDetails["特碰"] = *detail
+				lotteryInfo.TotalAmount = lotteryInfo.TotalAmount.Add(detail.TotalAmount)
+				lotteryInfo.TotalGroups += detail.TotalGroups
+			}
 		}
 
 		// 检查是否有下注类型但没有具体号码
 		hasAnyBetType := betTypeFlags.HasThreeOfThree || betTypeFlags.HasTwoOfTwo ||
 			betTypeFlags.HasThreeOfTwo || betTypeFlags.HasSpecial
 
-		if hasAnyBetType && len(sourceNumbers) == 0 {
+		if !hasAnyBetType {
 			result.HasError = true
-			result.ErrorMessage = "识别到下注类型但没有找到具体号码"
+			result.ErrorMessage = append(result.ErrorMessage, "没有识别到任何的下注类型,请检查是否有下注包含：三中三、二中二、三中二、特碰，一种或多种下注类型")
 			return result
-		}
-
-		// 如果没有任何下注类型，尝试推断
-		if !hasAnyBetType && len(sourceNumbers) > 0 {
-			inferredBetType := p.inferBetTypeFromNumbers(sourceNumbers)
-			if inferredBetType != "" {
-				detail := p.processBetType(inferredBetType, sourceNumbers, unitAmount, segment)
-				lotteryInfo.BetTypeDetails[inferredBetType] = detail
-				lotteryInfo.TotalAmount = lotteryInfo.TotalAmount.Add(detail.TotalAmount)
-				lotteryInfo.TotalGroups += detail.TotalGroups
-			}
 		}
 
 		result.LotteryBets[lottery] = lotteryInfo
@@ -967,22 +1109,6 @@ func (p *IntelligentBetParser) parseSingleBet(betID string, segment string, cont
 	result.BetStatistics = p.generateNewBetStatistics(result.LotteryBets)
 
 	return result
-}
-
-// inferBetTypeFromNumbers 根据号码数量推断下注类型
-func (p *IntelligentBetParser) inferBetTypeFromNumbers(numbers []int) string {
-	count := len(numbers)
-	switch count {
-	case 2:
-		return "二中二"
-	case 3:
-		return "三中三"
-	default:
-		if count > 3 {
-			return "三中三" // 默认复式三中三
-		}
-		return ""
-	}
 }
 
 // generateNewBetStatistics 生成新版本的下注统计
@@ -1016,34 +1142,8 @@ func (p *IntelligentBetParser) generateNewBetStatistics(lotteryBets map[string]L
 	return stats
 }
 
-// smartExtractNumbersAndAmount 智能提取号码和金额
-func (p *IntelligentBetParser) smartExtractNumbersAndAmount(text string, betTypes []string, isComplex, isDrag bool) NumbersAndAmount {
-	result := NumbersAndAmount{}
-
-	// 1. 先尝试识别明确的金额模式
-	amount := p.extractAmountSmart(text)
-	if amount > 0 {
-		// 找到明确金额，提取号码
-		result.Amount = amount
-		result.Numbers = p.extractNumbersExcludingAmount(text, amount)
-		return result
-	}
-	safeLogger.AppendLog(fmt.Sprintf("智能提取金额: %f", amount))
-
-	// 2. 没有明确金额标识，需要智能分析
-	allNumbers := p.extractAllNumbers(text)
-	if len(allNumbers) < 2 {
-		return result // 至少需要1个号码+1个金额
-	}
-
-	// 3. 分析模式，寻找最后一个重复数字作为金额
-	result = p.analyzeNumberPattern(allNumbers, text)
-
-	return result
-}
-
 // extractAmountSmart 智能提取金额
-func (p *IntelligentBetParser) extractAmountSmart(text string) float64 {
+func (p *IntelligentBetParser) extractAmountSmart(text string) decimal.Decimal {
 	// 金额模式（按优先级排序）
 	patterns := []string{
 		`各(\d+)`,  // 各20
@@ -1054,203 +1154,96 @@ func (p *IntelligentBetParser) extractAmountSmart(text string) float64 {
 		re := regexp.MustCompile(pattern)
 		if matches := re.FindStringSubmatch(text); len(matches) > 1 {
 			if amount, err := strconv.ParseFloat(matches[1], 64); err == nil {
-				return amount
+				return decimal.NewFromFloat(amount)
 			}
 		}
 	}
-	return 0
+	return decimal.NewFromInt(0)
 }
 
-// analyzeNumberPattern 分析数字模式
-func (p *IntelligentBetParser) analyzeNumberPattern(numbers []int, text string) NumbersAndAmount {
-	result := NumbersAndAmount{}
+// isComplexBet 检查是否为复式下注
+func (p *IntelligentBetParser) isComplexBet(betType string, text string) bool {
+	// 规则1: 文本中包含"复式"关键词
+	// if strings.Contains(text, "复式") {
+	// 	return true
+	// }
 
-	if len(numbers) < 2 {
-		return result
+	switch betType {
+	case "三中三", "三中二":
+		// 三中三或三中二: 连续4个或以上数字
+		return p.hasConsecutiveNumbers(text, 4)
+	case "二中二", "特碰":
+		// 二中二或特碰: 连续3个或以上数字
+		return p.hasConsecutiveNumbers(text, 3)
+	}
+	return false
+}
+
+// hasConsecutiveNumbers 检查文本中是否存在连续的n个数字,需要排除"拖"字
+func (p *IntelligentBetParser) hasConsecutiveNumbers(text string, n int) bool {
+	if n <= 0 {
+		return false
 	}
 
-	// 对于12-38=20这种情况，根据分隔符数量推断下注类型
-	separatorCount := strings.Count(text, "-") + strings.Count(text, ".") + strings.Count(text, ",")
+	// 匹配所有数字组合
+	re := regexp.MustCompile(`\d{1,2}(?:-\d{1,2})*`)
+	matchIndices := re.FindAllStringIndex(text, -1)
 
-	if separatorCount == 2 {
-		// 两个分隔符，默认二中二，第三个是金额
-		if len(numbers) >= 3 {
-			result.Numbers = numbers[:2]
-			result.Amount = float64(numbers[2])
-			return result
-		}
-	} else if separatorCount == 3 {
-		// 三个分隔符，默认三中三，第四个是金额
-		if len(numbers) >= 4 {
-			result.Numbers = numbers[:3]
-			result.Amount = float64(numbers[3])
-			return result
-		}
-	}
+	for _, indices := range matchIndices {
+		start, end := indices[0], indices[1]
+		match := text[start:end]
 
-	// 寻找最后出现的重复数字，很可能是金额
-	lastNum := numbers[len(numbers)-1]
+		// 检查前后字符
+		shouldSkip := false
 
-	// 检查是否有多个相同的最后数字
-	sameAsLastCount := 0
-	for _, num := range numbers {
-		if num == lastNum {
-			sameAsLastCount++
-		}
-	}
-
-	if sameAsLastCount > 1 {
-		// 最后的数字重复出现，很可能是金额
-		result.Amount = float64(lastNum)
-		// 提取不等于金额的号码
-		for _, num := range numbers {
-			if num != lastNum && num >= 1 && num <= 49 {
-				result.Numbers = append(result.Numbers, num)
+		// 检查前一个字符
+		if start > 0 {
+			beforeText := text[:start]
+			if len(beforeText) > 0 {
+				runes := []rune(beforeText)
+				if len(runes) > 0 {
+					prevRune := runes[len(runes)-1]
+					if prevRune == '拖' || unicode.IsDigit(prevRune) {
+						shouldSkip = true
+					}
+				}
 			}
 		}
-	} else {
-		// 分析特殊模式：如 12,30,50,30 或 8,20,50,30
-		result = p.analyzeSpecialPatterns(numbers, text)
-	}
 
-	return result
-}
-
-// analyzeSpecialPatterns 分析特殊模式
-func (p *IntelligentBetParser) analyzeSpecialPatterns(numbers []int, text string) NumbersAndAmount {
-	result := NumbersAndAmount{}
-
-	if len(numbers) < 3 {
-		return result
-	}
-
-	// 检查最后一个数字是否可能是金额（通常金额会比较小或者重复）
-	lastNum := numbers[len(numbers)-1]
-
-	// 如果最后数字小于等于1000且前面有至少2个数字，认为是金额
-	if lastNum <= 1000 && len(numbers) >= 3 {
-		result.Amount = float64(lastNum)
-		result.Numbers = numbers[:len(numbers)-1]
-
-		// 过滤无效号码
-		validNumbers := make([]int, 0)
-		for _, num := range result.Numbers {
-			if num >= 1 && num <= 49 {
-				validNumbers = append(validNumbers, num)
+		// 检查后一个字符
+		if end < len(text) && !shouldSkip {
+			afterText := text[end:]
+			if len(afterText) > 0 {
+				runes := []rune(afterText)
+				if len(runes) > 0 {
+					nextRune := runes[0]
+					if nextRune == '拖' || unicode.IsDigit(nextRune) {
+						shouldSkip = true
+					}
+				}
 			}
 		}
-		result.Numbers = validNumbers
-	} else {
-		// 默认处理：最后一个数字是金额
-		if len(numbers) > 1 {
-			result.Amount = float64(numbers[len(numbers)-1])
-			result.Numbers = numbers[:len(numbers)-1]
+
+		if shouldSkip {
+			continue
+		}
+
+		// 验证这个匹配确实包含至少n个数字
+		numStrings := strings.Split(match, "-")
+		if len(numStrings) >= n {
+			return true
 		}
 	}
 
-	return result
-}
-
-// extractNumbersExcludingAmount 提取号码，排除金额
-func (p *IntelligentBetParser) extractNumbersExcludingAmount(text string, amount float64) []int {
-	allNumbers := p.extractAllNumbers(text)
-	amountInt := int(amount)
-
-	numbers := make([]int, 0)
-	for _, num := range allNumbers {
-		if num != amountInt && num >= 1 && num <= 49 {
-			numbers = append(numbers, num)
-		}
-	}
-	return numbers
-}
-
-// extractAllNumbers 提取所有数字
-func (p *IntelligentBetParser) extractAllNumbers(text string) []int {
-	numberRe := regexp.MustCompile(`\d+`)
-	matches := numberRe.FindAllString(text, -1)
-
-	numbers := make([]int, 0)
-	for _, match := range matches {
-		if num, err := strconv.Atoi(match); err == nil {
-			numbers = append(numbers, num)
-		}
-	}
-	return numbers
-}
-
-// inferBetTypes 根据号码数量推断下注类型
-func (p *IntelligentBetParser) inferBetTypes(numbers []int, text string) []string {
-	numCount := len(numbers)
-
-	// 检查是否有特殊下注类型关键词
-	if strings.Contains(text, "特串") || strings.Contains(text, "特碰") {
-		return []string{"特碰"}
-	}
-
-	switch numCount {
-	case 1:
-		return []string{"特碰"}
-	case 2:
-		return []string{"二中二"}
-	case 3:
-		return []string{"三中三"}
-	default:
-		if numCount > 3 {
-			return []string{"三中三"} // 默认三中三
-		}
-		return []string{"特碰"} // 默认特碰
-	}
-}
-
-// isComplexBet 检查是否复式下注
-func (p *IntelligentBetParser) isComplexBet(text string) bool {
-	return strings.Contains(text, "复式")
+	return false
 }
 
 // isDragBet 检查是否拖码下注
 func (p *IntelligentBetParser) isDragBet(text string) bool {
-	return strings.Contains(text, "拖")
-}
-
-// calculateGroups 计算组数
-func (p *IntelligentBetParser) calculateGroups(numbers []int, betType string, isComplex, isDrag bool) int {
-	if isDrag {
-		// 拖码计算：需要更复杂的逻辑 - 简化实现
-		return 1
+	if strings.Contains(text, "拖") {
+		return true
 	}
-
-	if isComplex {
-		// 复式计算
-		switch betType {
-		case "三中三":
-			return p.combination(len(numbers), 3)
-		case "三中二":
-			return p.combination(len(numbers), 3)
-		case "二中二":
-			return p.combination(len(numbers), 2)
-		case "特碰":
-			return p.combination(len(numbers), 2)
-		}
-	}
-
-	return 1 // 默认1组
-}
-
-// combination 计算组合数C(n,r)
-func (p *IntelligentBetParser) combination(n, r int) int {
-	if r > n || r < 0 {
-		return 0
-	}
-	if r == 0 || r == n {
-		return 1
-	}
-
-	result := 1
-	for i := 0; i < r; i++ {
-		result = result * (n - i) / (i + 1)
-	}
-	return result
+	return false
 }
 
 // generateBetStatistics 生成单笔下注统计（保留旧版本兼容）

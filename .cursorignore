@@ -1,0 +1,85 @@
+# Build outputs
+build/
+dist/
+bin/
+frontend/dist/
+frontend/node_modules/
+wailsjs/
+
+# Dependencies
+node_modules/
+go.sum
+
+# Generated files
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Cache directories
+.cache/
+.parcel-cache/
+.npm/
+.eslintcache/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Large binary files
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Documentation that doesn't need AI assistance
+example_users.txt
+test_example.md
+development_guide.md
+
+# Package lock files (usually auto-generated)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Environment files
+.env*
+!.env.example
+
+# Coverage reports
+coverage/
+*.lcov
+
+# Runtime files
+*.pid
+*.seed
+*.pid.lock
+
+# Project specific files
+betstring.txt
+test_parsing.txt
+start.log

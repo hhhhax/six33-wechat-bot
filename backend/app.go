@@ -579,11 +579,11 @@ func (a *App) createParserConfig() IntelligentBetParserConfig {
 		},
 		KeywordAliases: map[string][]string{
 			"复式": keywordAliases.Complex,
+			"拖":  keywordAliases.Drag,
 		},
 		EndKeywords: map[string][]string{
-			"各": keywordAliases.Each,
+			"各":  keywordAliases.Each,
 			"每组": keywordAliases.PerGroup,
 		},
-
 	}
 }

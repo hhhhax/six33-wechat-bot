@@ -162,6 +162,7 @@ func getDefaultSystemConfig() *SystemConfig {
 			OldMacau: []string{"老", "老澳", "老澳门", "旧"},
 			HongKong: []string{"香", "香港", "港"},
 			Complex:  []string{"复式", "复试", "组合"},
+			Drag:     []string{"拖", "拖码", "拖号"},
 			Each:     []string{"各", "每个", "分别", "都"},
 			PerGroup: []string{"每组", "一组"},
 		},

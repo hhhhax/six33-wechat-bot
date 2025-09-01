@@ -38,9 +38,16 @@
                     v-model="zodiac.numbers" 
                     type="text" 
                     placeholder="用逗号分隔数字" 
-                    class="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    :class="[
+                      'w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500',
+                      getFieldError('zodiac', zodiac.key) ? 'border-red-500 bg-red-50' : 'border-gray-300'
+                    ]"
+                    @blur="validateOnBlur('zodiac', zodiac.key, zodiac.numbers, zodiac.name)"
                   >
-                  <div class="text-xs text-gray-500 mt-1">
+                  <div v-if="getFieldError('zodiac', zodiac.key)" class="text-xs text-red-600 mt-1">
+                    {{ getFieldError('zodiac', zodiac.key) }}
+                  </div>
+                  <div v-else class="text-xs text-gray-500 mt-1">
                     当前: {{ zodiac.numbers || '未设置' }}
                   </div>
                 </div>
@@ -65,9 +72,16 @@
                     v-model="color.numbers" 
                     type="text" 
                     placeholder="用逗号分隔数字" 
-                    class="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    :class="[
+                      'w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500',
+                      getFieldError('colors', color.key) ? 'border-red-500 bg-red-50' : 'border-gray-300'
+                    ]"
+                    @blur="validateOnBlur('colors', color.key, color.numbers, color.name)"
                   >
-                  <div class="text-xs mt-1 opacity-75" :class="color.textClass">
+                  <div v-if="getFieldError('colors', color.key)" class="text-xs text-red-600 mt-1">
+                    {{ getFieldError('colors', color.key) }}
+                  </div>
+                  <div v-else class="text-xs mt-1 opacity-75" :class="color.textClass">
                     当前: {{ color.numbers || '未设置' }}
                   </div>
                 </div>
@@ -92,9 +106,16 @@
                     v-model="tail.numbers" 
                     type="text" 
                     placeholder="逗号分隔" 
-                    class="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    :class="[
+                      'w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500',
+                      getFieldError('tails', tail.key) ? 'border-red-500 bg-red-50' : 'border-gray-300'
+                    ]"
+                    @blur="validateOnBlur('tails', tail.key, tail.numbers, tail.tail + '尾')"
                   >
-                  <div class="text-xs text-gray-500 mt-1">
+                  <div v-if="getFieldError('tails', tail.key)" class="text-xs text-red-600 mt-1">
+                    {{ getFieldError('tails', tail.key) }}
+                  </div>
+                  <div v-else class="text-xs text-gray-500 mt-1">
                     {{ tail.numbers || '未设置' }}
                   </div>
                 </div>
@@ -119,9 +140,16 @@
                     v-model="betType.aliases" 
                     type="text" 
                     placeholder="用逗号分隔别名" 
-                    class="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    :class="[
+                      'w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500',
+                      getFieldError('betTypes', betType.type) ? 'border-red-500 bg-red-50' : 'border-gray-300'
+                    ]"
+                    @blur="validateOnBlur('betTypes', betType.type, betType.aliases, betType.name)"
                   >
-                  <div class="text-xs text-gray-500 mt-1">
+                  <div v-if="getFieldError('betTypes', betType.type)" class="text-xs text-red-600 mt-1">
+                    {{ getFieldError('betTypes', betType.type) }}
+                  </div>
+                  <div v-else class="text-xs text-gray-500 mt-1">
                     别名: {{ betType.aliases || '未设置' }}
                   </div>
                 </div>
@@ -315,9 +343,16 @@
                     v-model="keyword.aliases" 
                     type="text" 
                     placeholder="用逗号分隔别名" 
-                    class="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    :class="[
+                      'w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500',
+                      getFieldError('keywords', keyword.type) ? 'border-red-500 bg-red-50' : 'border-gray-300'
+                    ]"
+                    @blur="validateOnBlur('keywords', keyword.type, keyword.aliases, keyword.name)"
                   >
-                  <div class="text-xs text-gray-500 mt-1">
+                  <div v-if="getFieldError('keywords', keyword.type)" class="text-xs text-red-600 mt-1">
+                    {{ getFieldError('keywords', keyword.type) }}
+                  </div>
+                  <div v-else class="text-xs text-gray-500 mt-1">
                     别名: {{ keyword.aliases || '未设置' }}
                   </div>
                 </div>
@@ -363,6 +398,15 @@ const activeTab = ref('zodiac');
 
 // 通知组件引用
 const notification = ref(null);
+
+// 错误状态管理
+const validationErrors = ref({
+  zodiac: {},
+  colors: {},
+  tails: {},
+  betTypes: {},
+  keywords: {}
+});
 
 // 配置选项卡
 const configTabs = [
@@ -439,6 +483,7 @@ const keywordConfig = ref([
   { type: 'old_macau', name: '老澳', aliases: '' },
   { type: 'hong_kong', name: '香港', aliases: '' },
   { type: 'complex', name: '复式', aliases: '' },
+  { type: 'drag', name: '拖码', aliases: '' },
   { type: 'each', name: '各', aliases: '' },
   { type: 'per_group', name: '每组', aliases: '' }
 ]);
@@ -547,6 +592,27 @@ const loadAllConfigs = async () => {
 // 保存12生肖配置
 const saveZodiacConfig = async () => {
   try {
+    // 检查是否有错误
+    if (Object.keys(validationErrors.value.zodiac).length > 0) {
+      if (notification.value) {
+        notification.value.show('保存失败', '请先修正输入错误再保存', 'error');
+      }
+      return;
+    }
+
+    // 格式校验
+    for (const item of zodiacConfig.value) {
+      if (item.numbers.trim()) {
+        const validation = validateConfigInput(item.numbers, '12生肖');
+        if (!validation.isValid) {
+          if (notification.value) {
+            notification.value.show('配置格式错误', `${item.name}：${validation.message}`, 'error');
+          }
+          return;
+        }
+      }
+    }
+    
     const config = {};
     zodiacConfig.value.forEach(item => {
       if (item.numbers.trim()) {
@@ -586,6 +652,27 @@ const resetZodiacConfig = async () => {
 // 保存颜色配置
 const saveColorConfig = async () => {
   try {
+    // 检查是否有错误
+    if (Object.keys(validationErrors.value.colors).length > 0) {
+      if (notification.value) {
+        notification.value.show('保存失败', '请先修正输入错误再保存', 'error');
+      }
+      return;
+    }
+
+    // 格式校验
+    for (const item of colorConfig.value) {
+      if (item.numbers.trim()) {
+        const validation = validateConfigInput(item.numbers, '颜色');
+        if (!validation.isValid) {
+          if (notification.value) {
+            notification.value.show('配置格式错误', `${item.name}：${validation.message}`, 'error');
+          }
+          return;
+        }
+      }
+    }
+    
     const config = {};
     colorConfig.value.forEach(item => {
       if (item.numbers.trim()) {
@@ -625,6 +712,27 @@ const resetColorConfig = async () => {
 // 保存尾数配置
 const saveTailConfig = async () => {
   try {
+    // 检查是否有错误
+    if (Object.keys(validationErrors.value.tails).length > 0) {
+      if (notification.value) {
+        notification.value.show('保存失败', '请先修正输入错误再保存', 'error');
+      }
+      return;
+    }
+
+    // 格式校验
+    for (const item of tailConfig.value) {
+      if (item.numbers.trim()) {
+        const validation = validateConfigInput(item.numbers, '尾数');
+        if (!validation.isValid) {
+          if (notification.value) {
+            notification.value.show('配置格式错误', `${item.name}：${validation.message}`, 'error');
+          }
+          return;
+        }
+      }
+    }
+    
     const config = {};
     tailConfig.value.forEach(item => {
       if (item.numbers.trim()) {
@@ -664,6 +772,27 @@ const resetTailConfig = async () => {
 // 保存下注类型配置
 const saveBetTypeConfig = async () => {
   try {
+    // 检查是否有错误
+    if (Object.keys(validationErrors.value.betTypes).length > 0) {
+      if (notification.value) {
+        notification.value.show('保存失败', '请先修正输入错误再保存', 'error');
+      }
+      return;
+    }
+
+    // 格式校验
+    for (const item of betTypeConfig.value) {
+      if (item.aliases.trim()) {
+        const validation = validateConfigInput(item.aliases, '下注类型');
+        if (!validation.isValid) {
+          if (notification.value) {
+            notification.value.show('配置格式错误', `${item.name}：${validation.message}`, 'error');
+          }
+          return;
+        }
+      }
+    }
+    
     const config = {};
     betTypeConfig.value.forEach(item => {
       if (item.aliases.trim()) {
@@ -703,6 +832,27 @@ const resetBetTypeConfig = async () => {
 // 保存关键字配置
 const saveKeywordConfig = async () => {
   try {
+    // 检查是否有错误
+    if (Object.keys(validationErrors.value.keywords).length > 0) {
+      if (notification.value) {
+        notification.value.show('保存失败', '请先修正输入错误再保存', 'error');
+      }
+      return;
+    }
+
+    // 格式校验
+    for (const item of keywordConfig.value) {
+      if (item.aliases && item.aliases.trim()) {
+        const validation = validateConfigInput(item.aliases, '关键字');
+        if (!validation.isValid) {
+          if (notification.value) {
+            notification.value.show('配置格式错误', `${item.name}：${validation.message}`, 'error');
+          }
+          return;
+        }
+      }
+    }
+    
     const config = {};
     keywordConfig.value.forEach(item => {
       const aliases = item.aliases ? item.aliases.split(',').map(s => s.trim()).filter(s => s) : [];
@@ -793,6 +943,52 @@ const resetOddsConfig = async () => {
       }
     }
   }
+};
+
+// 配置输入格式校验函数
+const validateConfigInput = (input, configType) => {
+  if (!input || !input.trim()) {
+    return { isValid: true, message: '' }; // 空值允许
+  }
+  
+  // 检查是否只包含逗号作为分隔符
+  const forbiddenChars = /[^a-zA-Z0-9\u4e00-\u9fff\s,]/;
+  if (forbiddenChars.test(input)) {
+    const invalidChars = input.match(/[^a-zA-Z0-9\u4e00-\u9fff\s,]/g);
+    return {
+      isValid: false,
+      message: `配置格式错误！只能使用英文逗号分隔，检测到非法字符：${[...new Set(invalidChars)].join(', ')}`
+    };
+  }
+  
+  return { isValid: true, message: '' };
+};
+
+// 离焦校验函数
+const validateOnBlur = (configType, itemKey, value, itemName) => {
+  const validation = validateConfigInput(value, configType);
+  
+  if (!validation.isValid) {
+    // 设置错误状态
+    validationErrors.value[configType][itemKey] = validation.message;
+  } else {
+    // 清除错误状态
+    delete validationErrors.value[configType][itemKey];
+  }
+  
+  return validation.isValid;
+};
+
+// 获取字段错误信息
+const getFieldError = (configType, itemKey) => {
+  return validationErrors.value[configType] && validationErrors.value[configType][itemKey];
+};
+
+// 检查是否有错误
+const hasErrors = () => {
+  return Object.values(validationErrors.value).some(configErrors => 
+    Object.keys(configErrors).length > 0
+  );
 };
 
 // 页面加载时获取配置
